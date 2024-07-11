@@ -2,27 +2,55 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-// You can use print statements as follows for debugging, they'll be visible when running tests.
-Console.WriteLine("Logs from your program will appear here!");
+namespace codecrafters_http_server;
 
-// Uncomment this block to pass the first stage
-TcpListener server = new TcpListener(IPAddress.Any, 4221);
-server.Start();
-var clientSocket = server.AcceptSocket(); // wait for client
-Console.WriteLine("Client connected!");
+public class Program
+{
+    public static async Task Main(string[] args)
+    {
+        // You can use print statements as follows for debugging, they'll be visible when running tests.
+        Console.WriteLine("Logs from your program will appear here!");
 
-var requestBuffer = new byte[1024];
-var requestLength = clientSocket.Receive(requestBuffer);
-var requestString = Encoding.ASCII.GetString(requestBuffer, 0, requestLength);
-Console.WriteLine("Request:");
-Console.WriteLine(requestString);
+        TcpListener server = new TcpListener(IPAddress.Any, 4221);
+        server.Start();
 
-var responseString = Router.GetResponse(requestString);
+        while (true)
+        {
+            var clientSocket = await server.AcceptSocketAsync(); // wait for client
+            Console.WriteLine("Client connected!");
 
-var sendBytes = Encoding.ASCII.GetBytes(responseString);
-clientSocket.Send(sendBytes);
-Console.WriteLine("Message Sent /> : " + responseString);
+            _ = HandleRequestAsync(clientSocket);
+        }
+        // ReSharper disable once FunctionNeverReturns
+    }
 
+    static async Task HandleRequestAsync(Socket clientSocket)
+    {
+        await using NetworkStream networkStream = new NetworkStream(clientSocket);
+        try
+        {
+            var requestBuffer = new byte[1024];
+            var requestLength = await networkStream.ReadAsync(requestBuffer, 0, requestBuffer.Length);
+            var requestString = Encoding.ASCII.GetString(requestBuffer, 0, requestLength);
+            Console.WriteLine("Request:");
+            Console.WriteLine(requestString);
+
+            var responseString = Router.GetResponse(requestString);
+
+            var sendBytes = Encoding.ASCII.GetBytes(responseString);
+            clientSocket.Send(sendBytes);
+            Console.WriteLine("Message Sent /> : " + responseString);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception: {ex.Message}");
+        }
+        finally
+        {
+            clientSocket.Close();
+        }
+    }
+}
 
 public class HttpResponse
 {
