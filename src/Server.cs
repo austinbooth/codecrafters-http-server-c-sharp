@@ -19,14 +19,7 @@ Console.WriteLine(requestString);
 var requestLines = requestString.Split("\r\n");
 var urlPath = requestLines[0].Split(' ')[1];
 
-var responseString200NoContent = new ResponseBuilder()
-    .WithResponseCode(200)
-    .Build();
-var responseString404NoContent = new ResponseBuilder()
-    .WithResponseCode(404)
-    .Build();
-
-var responseString = urlPath == "/" ? responseString200NoContent : responseString404NoContent;
+var responseString = Router.GetResponse(urlPath);
 
 var sendBytes = Encoding.ASCII.GetBytes(responseString);
 clientSocket.Send(sendBytes);
@@ -88,5 +81,30 @@ public class ResponseBuilder
             _httpResponse.HeadersList.Add("Content-Type: text/plain");
             _httpResponse.HeadersList.Add($"Content-Length: {_httpResponse.Body.Length}");
         }
+    }
+}
+
+public class Router
+{
+    public static string GetResponse(string urlPath)
+    {
+        if (urlPath == "/")
+        {
+            return new ResponseBuilder()
+                .WithResponseCode(200)
+                .Build();
+        }
+        if (!urlPath.Contains("/echo/"))
+        {
+            return new ResponseBuilder()
+                .WithResponseCode(404)
+                .Build();
+        }
+        var valueToReturn = urlPath.Split('/').Last();
+        Console.WriteLine("Value to return: " + valueToReturn);
+        return new ResponseBuilder()
+            .WithResponseCode(200)
+            .WithBody(valueToReturn)
+            .Build();
     }
 }
