@@ -16,10 +16,8 @@ var requestLength = clientSocket.Receive(requestBuffer);
 var requestString = Encoding.ASCII.GetString(requestBuffer, 0, requestLength);
 Console.WriteLine("Request:");
 Console.WriteLine(requestString);
-var requestLines = requestString.Split("\r\n");
-var urlPath = requestLines[0].Split(' ')[1];
 
-var responseString = Router.GetResponse(urlPath);
+var responseString = Router.GetResponse(requestString);
 
 var sendBytes = Encoding.ASCII.GetBytes(responseString);
 clientSocket.Send(sendBytes);
@@ -86,25 +84,52 @@ public class ResponseBuilder
 
 public class Router
 {
-    public static string GetResponse(string urlPath)
+    public static string GetResponse(string requestString)
     {
+        var urlPath = GetUrlPath(requestString);
         if (urlPath == "/")
         {
             return new ResponseBuilder()
                 .WithResponseCode(200)
                 .Build();
         }
-        if (!urlPath.Contains("/echo/"))
+        if (urlPath.Contains("/echo/"))
         {
+            var valueToReturn = urlPath.Split('/').Last();
+            Console.WriteLine("Value to return: " + valueToReturn);
             return new ResponseBuilder()
-                .WithResponseCode(404)
+                .WithResponseCode(200)
+                .WithBody(valueToReturn)
                 .Build();
         }
-        var valueToReturn = urlPath.Split('/').Last();
-        Console.WriteLine("Value to return: " + valueToReturn);
+
+        if (urlPath.TrimEnd('/').Equals("/user-agent", StringComparison.OrdinalIgnoreCase))
+        {
+            var userAgentHeaderText = GetUserAgentHeader(requestString);
+            if (!string.IsNullOrEmpty(userAgentHeaderText))
+            {
+                return new ResponseBuilder()
+                    .WithResponseCode(200)
+                    .WithBody(userAgentHeaderText)
+                    .Build();
+            }
+        }
+
         return new ResponseBuilder()
-            .WithResponseCode(200)
-            .WithBody(valueToReturn)
+            .WithResponseCode(404)
             .Build();
+    }
+
+    private static string GetUrlPath(string requestString)
+    {
+        var requestLines = requestString.Split("\r\n");
+        return requestLines[0].Split(' ')[1];
+    }
+
+    private static string? GetUserAgentHeader(string requestString)
+    {
+        var requestLines = requestString.Split("\r\n");
+        var userAgentLine = Array.Find(requestLines, line => line.Contains("User-Agent:"));
+        return userAgentLine?.Split(' ')[1];
     }
 }
