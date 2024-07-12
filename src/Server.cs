@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace codecrafters_http_server;
 
@@ -58,6 +59,7 @@ public class HttpResponse
     public string ResponseCodeAndDescription { get; set; } = string.Empty;
     public List<string> HeadersList { get; set; } = new();
     public string? Body { get; set; }
+    public bool File { get; set; } = false;
 }
 
 public class ResponseBuilder
@@ -86,6 +88,12 @@ public class ResponseBuilder
         return this;
     }
 
+    public ResponseBuilder AsFile()
+    {
+        _httpResponse.File = true;
+        return this;
+    }
+
     public string Build()
     {
         AddContentHeaders();
@@ -104,7 +112,8 @@ public class ResponseBuilder
     {
         if (!string.IsNullOrEmpty(_httpResponse.Body))
         {
-            _httpResponse.HeadersList.Add("Content-Type: text/plain");
+            var contentTypeHeader = $"Content-Type: {(_httpResponse.File ? "application/octet-stream" : "text/plain")}";
+            _httpResponse.HeadersList.Add(contentTypeHeader);
             _httpResponse.HeadersList.Add($"Content-Length: {_httpResponse.Body.Length}");
         }
     }
@@ -139,6 +148,25 @@ public class Router
                 return new ResponseBuilder()
                     .WithResponseCode(200)
                     .WithBody(userAgentHeaderText)
+                    .Build();
+            }
+        }
+
+        if (urlPath.StartsWith("/files/"))
+        {
+            var regex = new Regex(@"/files/(?<filename>\w*)");
+            var match = regex.Match(urlPath);
+            var filename = match.Groups["filename"].Value;
+            var tmpDirPath = Environment.GetCommandLineArgs()[2];
+            var filePath = tmpDirPath + filename;
+            if (File.Exists(filePath))
+            {
+                Console.WriteLine("File found, attempting to read...");
+                var fileText = File.ReadAllText(filePath);
+                return new ResponseBuilder()
+                    .WithResponseCode(200)
+                    .WithBody(fileText)
+                    .AsFile()
                     .Build();
             }
         }
