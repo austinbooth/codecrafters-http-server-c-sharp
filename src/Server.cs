@@ -36,7 +36,7 @@ public class Program
             Console.WriteLine("Request:");
             Console.WriteLine(requestString);
 
-            var responseString = Router.GetResponse(requestString);
+            var responseString = await Router.GetResponse(requestString);
 
             var sendBytes = Encoding.ASCII.GetBytes(responseString);
             clientSocket.Send(sendBytes);
@@ -59,7 +59,7 @@ public class HttpResponse
     public string ResponseCodeAndDescription { get; set; } = string.Empty;
     public List<string> HeadersList { get; set; } = new();
     public string? Body { get; set; }
-    public bool File { get; set; } = false;
+    public bool File { get; set; }
 }
 
 public class ResponseBuilder
@@ -69,6 +69,7 @@ public class ResponseBuilder
     private static readonly Dictionary<int, string> StatusCodes = new()
     {
         { 200, "200 OK" },
+        { 201, "201 Created" },
         { 404, "404 Not Found" }
     };
 
@@ -119,9 +120,9 @@ public class ResponseBuilder
     }
 }
 
-public class Router
+public static class Router
 {
-    public static string GetResponse(string requestString)
+    public static async Task<string> GetResponse(string requestString)
     {
         var urlPath = GetUrlPath(requestString);
         if (urlPath == "/")
@@ -154,20 +155,26 @@ public class Router
 
         if (urlPath.StartsWith("/files/"))
         {
-            var regex = new Regex(@"/files/(?<filename>\w*)");
-            var match = regex.Match(urlPath);
-            var filename = match.Groups["filename"].Value;
-            var tmpDirPath = Environment.GetCommandLineArgs()[2];
-            var filePath = tmpDirPath + filename;
-            if (File.Exists(filePath))
+            var httpMethod = GetHttpMethod(requestString);
+            if (httpMethod == "GET")
             {
-                Console.WriteLine("File found, attempting to read...");
-                var fileText = File.ReadAllText(filePath);
-                return new ResponseBuilder()
-                    .WithResponseCode(200)
-                    .WithBody(fileText)
-                    .AsFile()
-                    .Build();
+                var getFileResult = GetFile(urlPath);
+                if (!string.IsNullOrEmpty(getFileResult))
+                {
+                    return getFileResult;
+                }
+            }
+            if (httpMethod == "POST")
+            {
+                // ignore the headers for now
+                var body = GetBody(requestString);
+                if (!string.IsNullOrEmpty(body))
+                {
+                    await CreateFile(urlPath, body);
+                    return new ResponseBuilder()
+                        .WithResponseCode(201)
+                        .Build();
+                }
             }
         }
 
@@ -182,10 +189,59 @@ public class Router
         return requestLines[0].Split(' ')[1];
     }
 
+    private static string GetHttpMethod(string requestString)
+    {
+        var requestLines = requestString.Split("\r\n");
+        return requestLines[0].Split(' ')[0];
+    }
+
     private static string? GetUserAgentHeader(string requestString)
     {
         var requestLines = requestString.Split("\r\n");
         var userAgentLine = Array.Find(requestLines, line => line.Contains("User-Agent:"));
         return userAgentLine?.Split(' ')[1];
+    }
+
+    private static string? GetBody(string requestString)
+    {
+        var requestLines = requestString.Split("\r\n");
+        return requestLines.LastOrDefault();
+    }
+
+    private static string? GetFileName(string urlPath)
+    {
+        var regex = new Regex(@"/files/(?<filename>\w*)");
+        var match = regex.Match(urlPath);
+        return match.Groups["filename"].Value;
+    }
+
+    private static string? GetFile(string urlPath)
+    {
+        var filename = GetFileName(urlPath);
+        var tmpDirPath = Environment.GetCommandLineArgs()[2];
+        var filePath = tmpDirPath + filename;
+        if (File.Exists(filePath))
+        {
+            Console.WriteLine("File found, attempting to read...");
+            var fileText = File.ReadAllText(filePath);
+            return new ResponseBuilder()
+                .WithResponseCode(200)
+                .WithBody(fileText)
+                .AsFile()
+                .Build();
+        }
+        return null;
+    }
+
+    private static async Task CreateFile(string urlPath, string contents)
+    {
+        var fileName = GetFileName(urlPath);
+        var tmpDirPath = Environment.GetCommandLineArgs()[2];
+        var filePath = tmpDirPath + fileName;
+        var file = new FileInfo(filePath);
+        FileStream fs = file.Exists ? file.Open(FileMode.Truncate) : file.Create();
+        byte[] fileData = new UTF8Encoding(true).GetBytes(contents);
+        await fs.WriteAsync(fileData, 0, fileData.Length);
+        fs.Close();
     }
 }
