@@ -221,11 +221,11 @@ public static class Router
         return userAgentLine?.Split(' ')[1];
     }
 
-    private static string? GetAcceptEncodingHeader(string requestString)
+    private static IEnumerable<string>? GetAcceptEncodingHeader(string requestString)
     {
         var requestLines = requestString.Split("\r\n");
-        var userAgentLine = Array.Find(requestLines, line => line.Contains("Accept-Encoding:"));
-        return userAgentLine?.Split(' ')[1];
+        var acceptEncodingLine = Array.Find(requestLines, line => line.Contains("Accept-Encoding:"));
+        return acceptEncodingLine?.Replace("Accept-Encoding:", "").Split(',').Select(x => x.Trim());
     }
 
     private static string? GetBody(string requestString)
@@ -273,12 +273,24 @@ public static class Router
 
     private static string? HandleAcceptEncodingHeaders(string requestString)
     {
-        var acceptEncodingHeader = GetAcceptEncodingHeader(requestString);
-        if (string.IsNullOrEmpty(requestString))
+        var acceptEncodingHeaderValues = GetAcceptEncodingHeader(requestString);
+
+        if (acceptEncodingHeaderValues == null)
         {
             return null;
         }
-        if (acceptEncodingHeader?.ToLower() == "gzip")
+
+        var includesGzipEncoding = false;
+        foreach (var encoding in acceptEncodingHeaderValues)
+        {
+            var encodingLower = encoding.ToLower();
+            if (encodingLower == "gzip")
+            {
+                includesGzipEncoding = true;
+                break;
+            }
+        }
+        if (includesGzipEncoding)
         {
             return new ResponseBuilder()
                 .WithResponseCode(200)
