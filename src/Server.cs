@@ -145,20 +145,13 @@ public static class Router
         }
         if (urlPath.Contains("/echo/"))
         {
-            var acceptEncodingHeader = GetAcceptEncodingHeader(requestString);
-            if (acceptEncodingHeader?.ToLower() == "gzip")
+            // handle
+            var encodingHeadersResponse = HandleAcceptEncodingHeaders(requestString);
+            if (encodingHeadersResponse != null)
             {
-                return new ResponseBuilder()
-                    .WithResponseCode(200)
-                    .WithContentEncodingGzipHeader()
-                    .Build();
+                return encodingHeadersResponse;
             }
-            if (!string.IsNullOrEmpty(acceptEncodingHeader))
-            {
-                return new ResponseBuilder()
-                    .WithResponseCode(200)
-                    .Build();
-            }
+
             var valueToReturn = urlPath.Split('/').Last();
             Console.WriteLine("Value to return: " + valueToReturn);
             return new ResponseBuilder()
@@ -276,5 +269,24 @@ public static class Router
         byte[] fileData = new UTF8Encoding(true).GetBytes(contents);
         await fs.WriteAsync(fileData, 0, fileData.Length);
         fs.Close();
+    }
+
+    private static string? HandleAcceptEncodingHeaders(string requestString)
+    {
+        var acceptEncodingHeader = GetAcceptEncodingHeader(requestString);
+        if (string.IsNullOrEmpty(requestString))
+        {
+            return null;
+        }
+        if (acceptEncodingHeader?.ToLower() == "gzip")
+        {
+            return new ResponseBuilder()
+                .WithResponseCode(200)
+                .WithContentEncodingGzipHeader()
+                .Build();
+        }
+        return new ResponseBuilder()
+            .WithResponseCode(200)
+            .Build();
     }
 }
