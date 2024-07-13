@@ -60,6 +60,7 @@ public class HttpResponse
     public List<string> HeadersList { get; set; } = new();
     public string? Body { get; set; }
     public bool File { get; set; }
+    public bool Gzip { get; set; }
 }
 
 public class ResponseBuilder
@@ -95,6 +96,12 @@ public class ResponseBuilder
         return this;
     }
 
+    public ResponseBuilder WithContentEncodingGzipHeader()
+    {
+        _httpResponse.Gzip = true;
+        return this;
+    }
+
     public string Build()
     {
         AddContentHeaders();
@@ -117,6 +124,11 @@ public class ResponseBuilder
             _httpResponse.HeadersList.Add(contentTypeHeader);
             _httpResponse.HeadersList.Add($"Content-Length: {_httpResponse.Body.Length}");
         }
+        if (_httpResponse.Gzip)
+        {
+            _httpResponse.HeadersList.Add("Content-Encoding: gzip");
+            _httpResponse.HeadersList.Add("Content-Type: text/plain");
+        }
     }
 }
 
@@ -133,6 +145,20 @@ public static class Router
         }
         if (urlPath.Contains("/echo/"))
         {
+            var acceptEncodingHeader = GetAcceptEncodingHeader(requestString);
+            if (acceptEncodingHeader?.ToLower() == "gzip")
+            {
+                return new ResponseBuilder()
+                    .WithResponseCode(200)
+                    .WithContentEncodingGzipHeader()
+                    .Build();
+            }
+            if (!string.IsNullOrEmpty(acceptEncodingHeader))
+            {
+                return new ResponseBuilder()
+                    .WithResponseCode(200)
+                    .Build();
+            }
             var valueToReturn = urlPath.Split('/').Last();
             Console.WriteLine("Value to return: " + valueToReturn);
             return new ResponseBuilder()
@@ -199,6 +225,13 @@ public static class Router
     {
         var requestLines = requestString.Split("\r\n");
         var userAgentLine = Array.Find(requestLines, line => line.Contains("User-Agent:"));
+        return userAgentLine?.Split(' ')[1];
+    }
+
+    private static string? GetAcceptEncodingHeader(string requestString)
+    {
+        var requestLines = requestString.Split("\r\n");
+        var userAgentLine = Array.Find(requestLines, line => line.Contains("Accept-Encoding:"));
         return userAgentLine?.Split(' ')[1];
     }
 
