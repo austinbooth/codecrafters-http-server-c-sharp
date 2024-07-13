@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -36,11 +37,10 @@ public class Program
             Console.WriteLine("Request:");
             Console.WriteLine(requestString);
 
-            var responseString = await Router.GetResponse(requestString);
+            var responseBytes = await Router.GetResponse(requestString);
 
-            var sendBytes = Encoding.ASCII.GetBytes(responseString);
-            clientSocket.Send(sendBytes);
-            Console.WriteLine("Message Sent /> : " + responseString);
+            clientSocket.Send(responseBytes);
+            Console.WriteLine("Message Sent /> : " + Encoding.ASCII.GetString(responseBytes));
         }
         catch (Exception ex)
         {
@@ -58,7 +58,7 @@ public class HttpResponse
     public const string HttpVersion = "HTTP/1.1";
     public string ResponseCodeAndDescription { get; set; } = string.Empty;
     public List<string> HeadersList { get; set; } = new();
-    public string? Body { get; set; }
+    public byte[]? Body { get; set; }
     public bool File { get; set; }
     public bool Gzip { get; set; }
 }
@@ -86,6 +86,11 @@ public class ResponseBuilder
 
     public ResponseBuilder WithBody(string body)
     {
+        return WithBody(Encoding.ASCII.GetBytes(body));
+    }
+
+    public ResponseBuilder WithBody(byte[] body)
+    {
         _httpResponse.Body = body;
         return this;
     }
@@ -102,23 +107,37 @@ public class ResponseBuilder
         return this;
     }
 
-    public string Build()
+    public byte[] Build()
     {
         AddContentHeaders();
-        return BuildResponseString();
+        return BuildResponseBytes();
     }
 
-    private string BuildResponseString() => String.Join("\r\n", new List<string?>
+    private byte[] BuildResponseBytes()
     {
-        $"{HttpResponse.HttpVersion} {_httpResponse.ResponseCodeAndDescription}",
-        String.Join("\r\n", _httpResponse.HeadersList),
-        _httpResponse.HeadersList.Count == 0 ? null : "",
-        _httpResponse.Body ?? ""
-    }.Where(x => x != null));
+        var responsePartsExceptBody = new List<string?>
+        {
+            $"{HttpResponse.HttpVersion} {_httpResponse.ResponseCodeAndDescription}",
+            String.Join("\r\n", _httpResponse.HeadersList),
+            "",
+        };
+        var responseStringExceptBody = String.Join("\r\n", responsePartsExceptBody);
+        var responseBytesExceptBody = Encoding.ASCII.GetBytes(responseStringExceptBody + "\r\n");
+
+        if (_httpResponse.Body != null)
+        {
+            var responseBytes = new byte[responseBytesExceptBody.Length + _httpResponse.Body.Length];
+            Buffer.BlockCopy(responseBytesExceptBody, 0, responseBytes, 0, responseBytesExceptBody.Length);
+            Buffer.BlockCopy(_httpResponse.Body, 0, responseBytes, responseBytesExceptBody.Length, _httpResponse.Body.Length);
+            return responseBytes;
+        }
+
+        return responseBytesExceptBody;
+    }
 
     private void AddContentHeaders()
     {
-        if (!string.IsNullOrEmpty(_httpResponse.Body))
+        if (_httpResponse.Body != null)
         {
             var contentTypeHeader = $"Content-Type: {(_httpResponse.File ? "application/octet-stream" : "text/plain")}";
             _httpResponse.HeadersList.Add(contentTypeHeader);
@@ -127,14 +146,13 @@ public class ResponseBuilder
         if (_httpResponse.Gzip)
         {
             _httpResponse.HeadersList.Add("Content-Encoding: gzip");
-            _httpResponse.HeadersList.Add("Content-Type: text/plain");
         }
     }
 }
 
 public static class Router
 {
-    public static async Task<string> GetResponse(string requestString)
+    public static async Task<byte[]> GetResponse(string requestString)
     {
         var urlPath = GetUrlPath(requestString);
         if (urlPath == "/")
@@ -145,7 +163,6 @@ public static class Router
         }
         if (urlPath.Contains("/echo/"))
         {
-            // handle
             var encodingHeadersResponse = HandleAcceptEncodingHeaders(requestString);
             if (encodingHeadersResponse != null)
             {
@@ -178,7 +195,7 @@ public static class Router
             if (httpMethod == "GET")
             {
                 var getFileResult = GetFile(urlPath);
-                if (!string.IsNullOrEmpty(getFileResult))
+                if (getFileResult != null)
                 {
                     return getFileResult;
                 }
@@ -241,7 +258,7 @@ public static class Router
         return match.Groups["filename"].Value;
     }
 
-    private static string? GetFile(string urlPath)
+    private static byte[]? GetFile(string urlPath)
     {
         var filename = GetFileName(urlPath);
         var tmpDirPath = Environment.GetCommandLineArgs()[2];
@@ -271,7 +288,7 @@ public static class Router
         fs.Close();
     }
 
-    private static string? HandleAcceptEncodingHeaders(string requestString)
+    private static byte[]? HandleAcceptEncodingHeaders(string requestString)
     {
         var acceptEncodingHeaderValues = GetAcceptEncodingHeader(requestString);
 
@@ -283,13 +300,32 @@ public static class Router
         var includesGzipEncoding = acceptEncodingHeaderValues.Any(x => x.ToLower() == "gzip");
         if (includesGzipEncoding)
         {
+            var urlPath = GetUrlPath(requestString);
+            var valueToCompress = urlPath.Split('/').Last();
+            if (valueToCompress == null)
+            {
+                throw new InvalidDataException();
+            }
+            var compressedBody = Compress(valueToCompress);
             return new ResponseBuilder()
                 .WithResponseCode(200)
+                .WithBody(compressedBody)
                 .WithContentEncodingGzipHeader()
                 .Build();
         }
         return new ResponseBuilder()
             .WithResponseCode(200)
             .Build();
+    }
+    
+    private static byte[] Compress(string text)
+    {
+        var textBytes = Encoding.ASCII.GetBytes(text);
+        using var ms = new MemoryStream();
+        using (var compressionStream = new GZipStream(ms, CompressionMode.Compress))
+        {
+            compressionStream.Write(textBytes, 0, textBytes.Length);
+        };
+        return ms.ToArray();
     }
 }
