@@ -280,16 +280,7 @@ public static class Router
             return null;
         }
 
-        var includesGzipEncoding = false;
-        foreach (var encoding in acceptEncodingHeaderValues)
-        {
-            var encodingLower = encoding.ToLower();
-            if (encodingLower == "gzip")
-            {
-                includesGzipEncoding = true;
-                break;
-            }
-        }
+        var includesGzipEncoding = acceptEncodingHeaderValues.Any(x => x.ToLower() == "gzip");
         if (includesGzipEncoding)
         {
             return new ResponseBuilder()
