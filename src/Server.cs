@@ -76,7 +76,7 @@ public class ResponseBuilder
     {
         if (!StatusCodes.TryGetValue(code, out var description))
         {
-            throw new ArgumentException("Unsupported HTTP status code, use 200 or 404");
+            throw new ArgumentException("Unsupported HTTP status code, use 200, 201 or 404");
         }
         _httpResponse.ResponseCodeAndDescription = description;
         return this;
@@ -176,7 +176,7 @@ public static class Router
 
         if (urlPath.TrimEnd('/').Equals("/user-agent", StringComparison.OrdinalIgnoreCase))
         {
-            var userAgentHeaderText = RequestService.GetUserAgentHeader(httpRequest);
+            var userAgentHeaderText = httpRequest.GetHeader("User-Agent");
 
             if (!string.IsNullOrEmpty(userAgentHeaderText))
             {
@@ -291,17 +291,12 @@ public static class Router
 
 public static class RequestService
 {
-    public static string? GetUserAgentHeader(HttpRequest httpRequest)
-    {
-        return httpRequest.Headers["User-Agent"];
-    }
-
     public static IEnumerable<string>? GetAcceptEncodingHeader(HttpRequest httpRequest)
     {
         try
         {
-            var acceptEncodingLine = httpRequest.Headers["Accept-Encoding"];
-            return acceptEncodingLine.Split(',').Select(x => x.Trim());
+            var acceptEncodingLine = httpRequest.GetHeader("Accept-Encoding");
+            return acceptEncodingLine?.Split(',').Select(x => x.Trim());
         }
         catch (Exception ex)
         {
@@ -320,6 +315,19 @@ public static class RequestService
 
 public record HttpRequest(string Method, string UrlPath, Dictionary<string, string> Headers, string? Body)
 {
+    public string? GetHeader(string headerName)
+    {
+        // "Accept-Encoding" or "User-Agent"
+        try
+        {
+            return Headers[headerName];
+        }
+        catch(Exception ex)
+        {
+            Console.WriteLine($"Exception trying to access header {headerName} - {ex.Message} - {ToString()}");
+            return null;
+        }
+    }
     public override string ToString()
     {
         string headers = "";
