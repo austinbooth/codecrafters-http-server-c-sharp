@@ -36,10 +36,9 @@ public class Program
                 var requestBuffer = new byte[1024];
                 var requestLength = await networkStream.ReadAsync(requestBuffer, 0, requestBuffer.Length);
                 var requestString = Encoding.ASCII.GetString(requestBuffer, 0, requestLength);
-                Console.WriteLine("Request:");
-                Console.WriteLine(requestString);
 
-                var responseBytes = await Router.GetResponse(requestString);
+                var request = HttpRequestFactory.Create(requestString);
+                var responseBytes = await Router.GetResponse(request);
 
                 clientSocket.Send(responseBytes);
                 Console.WriteLine("Message Sent /> : " + Encoding.ASCII.GetString(responseBytes));
@@ -118,7 +117,7 @@ public class ResponseBuilder
         {
             $"{HttpResponse.HttpVersion} {_httpResponse.ResponseCodeAndDescription}",
             String.Join("\r\n", _httpResponse.HeadersList),
-            "",
+            ""
         };
         var responseStringExceptBody = String.Join("\r\n", responsePartsExceptBody);
         var responseBytesExceptBody = Encoding.ASCII.GetBytes(responseStringExceptBody + "\r\n");
@@ -151,9 +150,9 @@ public class ResponseBuilder
 
 public static class Router
 {
-    public static async Task<byte[]> GetResponse(string requestString)
+    public static async Task<byte[]> GetResponse(HttpRequest httpRequest)
     {
-        var urlPath = RequestService.GetUrlPath(requestString);
+        var urlPath = httpRequest.UrlPath;
         if (urlPath == "/")
         {
             return new ResponseBuilder()
@@ -162,14 +161,13 @@ public static class Router
         }
         if (urlPath.Contains("/echo/"))
         {
-            var encodingHeadersResponse = HandleAcceptEncodingHeaders(requestString);
+            var encodingHeadersResponse = HandleAcceptEncodingHeaders(httpRequest);
             if (encodingHeadersResponse != null)
             {
                 return encodingHeadersResponse;
             }
 
             var valueToReturn = urlPath.Split('/').Last();
-            Console.WriteLine("Value to return: " + valueToReturn);
             return new ResponseBuilder()
                 .WithResponseCode(200)
                 .WithBody(valueToReturn)
@@ -178,7 +176,8 @@ public static class Router
 
         if (urlPath.TrimEnd('/').Equals("/user-agent", StringComparison.OrdinalIgnoreCase))
         {
-            var userAgentHeaderText = RequestService.GetUserAgentHeader(requestString);
+            var userAgentHeaderText = RequestService.GetUserAgentHeader(httpRequest);
+
             if (!string.IsNullOrEmpty(userAgentHeaderText))
             {
                 return new ResponseBuilder()
@@ -190,7 +189,7 @@ public static class Router
 
         if (urlPath.StartsWith("/files/"))
         {
-            var httpMethod = RequestService.GetHttpMethod(requestString);
+            var httpMethod = httpRequest.Method;
             if (httpMethod == "GET")
             {
                 var getFileResult = GetFile(urlPath);
@@ -202,7 +201,7 @@ public static class Router
             if (httpMethod == "POST")
             {
                 // ignore the headers for now
-                var body = RequestService.GetBody(requestString);
+                var body = httpRequest.Body;
                 if (!string.IsNullOrEmpty(body))
                 {
                     await CreateFile(urlPath, body);
@@ -248,9 +247,9 @@ public static class Router
         fs.Close();
     }
 
-    private static byte[]? HandleAcceptEncodingHeaders(string requestString)
+    private static byte[]? HandleAcceptEncodingHeaders(HttpRequest httpRequest)
     {
-        var acceptEncodingHeaderValues = RequestService.GetAcceptEncodingHeader(requestString);
+        var acceptEncodingHeaderValues = RequestService.GetAcceptEncodingHeader(httpRequest);
 
         if (acceptEncodingHeaderValues == null)
         {
@@ -260,7 +259,7 @@ public static class Router
         var includesGzipEncoding = acceptEncodingHeaderValues.Any(x => x.ToLower() == "gzip");
         if (includesGzipEncoding)
         {
-            var urlPath = RequestService.GetUrlPath(requestString);
+            var urlPath = httpRequest.UrlPath;
             var valueToCompress = urlPath.Split('/').Last();
             if (valueToCompress == null)
             {
@@ -285,43 +284,30 @@ public static class Router
         using (var compressionStream = new GZipStream(ms, CompressionMode.Compress))
         {
             compressionStream.Write(textBytes, 0, textBytes.Length);
-        };
+        }
         return ms.ToArray();
     }
 }
 
 public static class RequestService
 {
-    public static string GetUrlPath(string requestString)
+    public static string? GetUserAgentHeader(HttpRequest httpRequest)
     {
-        var requestLines = requestString.Split("\r\n");
-        return requestLines[0].Split(' ')[1];
+        return httpRequest.Headers["User-Agent"];
     }
 
-    public static string GetHttpMethod(string requestString)
+    public static IEnumerable<string>? GetAcceptEncodingHeader(HttpRequest httpRequest)
     {
-        var requestLines = requestString.Split("\r\n");
-        return requestLines[0].Split(' ')[0];
-    }
-
-    public static string? GetUserAgentHeader(string requestString)
-    {
-        var requestLines = requestString.Split("\r\n");
-        var userAgentLine = Array.Find(requestLines, line => line.Contains("User-Agent:"));
-        return userAgentLine?.Split(' ')[1];
-    }
-
-    public static IEnumerable<string>? GetAcceptEncodingHeader(string requestString)
-    {
-        var requestLines = requestString.Split("\r\n");
-        var acceptEncodingLine = Array.Find(requestLines, line => line.Contains("Accept-Encoding:"));
-        return acceptEncodingLine?.Replace("Accept-Encoding:", "").Split(',').Select(x => x.Trim());
-    }
-
-    public static string? GetBody(string requestString)
-    {
-        var requestLines = requestString.Split("\r\n");
-        return requestLines.LastOrDefault();
+        try
+        {
+            var acceptEncodingLine = httpRequest.Headers["Accept-Encoding"];
+            return acceptEncodingLine.Split(',').Select(x => x.Trim());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception: {ex.Message}");
+            return null;
+        }
     }
 
     public static string? GetFileName(string urlPath)
@@ -329,5 +315,44 @@ public static class RequestService
         var regex = new Regex(@"/files/(?<filename>\w*)");
         var match = regex.Match(urlPath);
         return match.Groups["filename"].Value;
+    }
+}
+
+public record HttpRequest(string Method, string UrlPath, Dictionary<string, string> Headers, string? Body)
+{
+    public override string ToString()
+    {
+        string headers = "";
+        foreach (var header in Headers)
+        {
+            headers += $"{header.Key}: {header.Value}\r\n";
+        }
+        return $@"
+            Method {Method}
+            UrlPath {UrlPath}
+            Headers:
+            {headers}
+        ";
+    }
+}
+
+public static class HttpRequestFactory
+{
+    public static HttpRequest Create(string requestString)
+    {
+        var requestLines = requestString.Split("\r\n");
+        var method = requestLines[0].Split(' ')[0];
+        var urlPath = requestLines[0].Split(' ')[1];
+        var body = requestLines.LastOrDefault();
+
+        var headerLines = requestString.Split("\r\n\r\n")[0].Split("\r\n")[1..];
+        var headers = new Dictionary<string, string>();
+        foreach (var headerLine in headerLines)
+        {
+            var kv = headerLine.Split(": ");
+            headers.Add(kv[0], kv[1]);
+        }
+
+        return new HttpRequest(method, urlPath, headers, body);
     }
 }
