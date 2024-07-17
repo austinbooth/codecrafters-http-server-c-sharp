@@ -249,7 +249,7 @@ public static class Router
 
     private static byte[]? HandleAcceptEncodingHeaders(HttpRequest httpRequest)
     {
-        var acceptEncodingHeaderValues = RequestService.GetAcceptEncodingHeader(httpRequest);
+        var acceptEncodingHeaderValues = httpRequest.GetCommaSeperatedHeader("Accept-Encoding");
 
         if (acceptEncodingHeaderValues == null)
         {
@@ -291,20 +291,6 @@ public static class Router
 
 public static class RequestService
 {
-    public static IEnumerable<string>? GetAcceptEncodingHeader(HttpRequest httpRequest)
-    {
-        try
-        {
-            var acceptEncodingLine = httpRequest.GetHeader("Accept-Encoding");
-            return acceptEncodingLine?.Split(',').Select(x => x.Trim());
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Exception: {ex.Message}");
-            return null;
-        }
-    }
-
     public static string? GetFileName(string urlPath)
     {
         var regex = new Regex(@"/files/(?<filename>\w*)");
@@ -328,6 +314,12 @@ public record HttpRequest(string Method, string UrlPath, Dictionary<string, stri
             return null;
         }
     }
+
+    public IEnumerable<string>? GetCommaSeperatedHeader(string headerName)
+    {
+        return GetHeader("Accept-Encoding")?.Split(',').Select(x => x.Trim());
+    }
+
     public override string ToString()
     {
         string headers = "";
