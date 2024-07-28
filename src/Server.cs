@@ -6,16 +6,30 @@ using System.Text.RegularExpressions;
 
 namespace codecrafters_http_server;
 
+public class RouteParams
+{
+    public string userId { get; set; }
+}
+
 public class Program
 {
     public static async Task Main(string[] args)
     {
         var router2 = new Router2();
         router2.AddRoute("first/second/third", "GET", () => Console.WriteLine("GET first/second/third"));
+        router2.AddRoute(
+            "first/:userId/second/third",
+            "GET",
+            (RouteParams parameters) => Console.WriteLine($"GET first/{parameters.userId}/second/third")
+            );
         var action = router2.MatchRoute("first/second/third", "GET");
         Console.WriteLine("**********************************");
         Console.WriteLine(action == null);
         action?.Invoke();
+
+        var secondAction = router2.MatchRoute("first/123/second/third", "GET", out RouteParams userParams);
+        Console.WriteLine(secondAction == null);
+        secondAction?.Invoke(userParams);
 
         // You can use print statements as follows for debugging, they'll be visible when running tests.
         Console.WriteLine("Logs from your program will appear here!");
@@ -364,45 +378,35 @@ public static class HttpRequestFactory
     }
 }
 
-// alevel-chemistry-tutor/api/questions/reactingMasses
-//{
-//  segment: 'alevel-chemistry-tutor',
-//  children: {
-//    segment: 'api',
-//    children: {
-//      segment: 'questions',
-//      children: {
-//        segment: 'reactingMasses',
-//        methods: {
-//          GET: () => {},
-//        },
-//      },
-//    },
-//  },
-//}
-
-//public enum HttpMethods
-//{
-//    GET,
-//    POST,
-//}
-
 public class RouteNode(string segment)
 {
-    public string Segment { get; set; } = segment;
+//    public string Segment { get; set; } = segment;
     public Dictionary<string, RouteNode> Children = new ();
-    public Dictionary<string, Action>? Handlers;
+    public string? ParameterName;
+//    public string? ParameterValue;
+    public RouteNode? ParameterChild;
+    public Dictionary<string, Delegate>? Handlers;
 
-    public void AddRoute(string[] segments, int index, string httpMethod, Action handler)
+    public void AddRoute(string[] segments, int index, string httpMethod, Delegate handler)
     {
         if (index == segments.Length)
         {
-            Handlers ??= new Dictionary<string, Action>();
+            Handlers ??= new Dictionary<string, Delegate>();
             Handlers.Add(httpMethod, handler);
             return;
         }
 
         var segment = segments[index];
+
+        if (segment.StartsWith(':'))
+        {
+            // path parameter
+            ParameterName = segment.TrimStart(':');
+            ParameterChild ??= new RouteNode(segment);
+            ParameterChild.AddRoute(segments, index + 1, httpMethod, handler);
+            return;
+        }
+
         if (!Children.ContainsKey(segment))
         {
             Children.Add(segment, new RouteNode(segment));
@@ -413,17 +417,45 @@ public class RouteNode(string segment)
 
     public RouteNode? Match(string[] segments, int index)
     {
-        Console.WriteLine($"In match, index: {index}");
         if (index == segments.Length)
         {
             return this;
         }
 
         var segment = segments[index];
+
         if (Children.ContainsKey(segment))
         {
             return Children[segment].Match(segments, index + 1);
         }
+
+        return null;
+    }
+
+
+    public RouteNode? Match(string[] segments, int index, Dictionary<string, string> parameters)
+    {
+        if (index == segments.Length)
+        {
+            return this;
+        }
+
+        var segment = segments[index];
+
+        if (Children.ContainsKey(segment))
+        {
+            return Children[segment].Match(segments, index + 1, parameters);
+        }
+
+        if (ParameterChild != null)
+        {
+            if (ParameterName != null)
+            {
+                parameters[ParameterName] = segment;
+            }
+            return ParameterChild.Match(segments, index + 1, parameters);
+        }
+
         return null;
     }
 }
@@ -438,10 +470,34 @@ public class Router2
         _root.AddRoute(pathSegments, 0, httpMethod, handler);
     }
 
+    public void AddRoute<T>(string path, string httpMethod, Action<T> handler)
+    {
+        var pathSegments = path.Trim('/').Split('/');
+        _root.AddRoute(pathSegments, 0, httpMethod, handler);
+    }
+
     public Action? MatchRoute(string path, string httpMethod)
     {
         var pathSegments = path.Trim('/').Split('/');
         var node = _root.Match(pathSegments, 0);
-        return node?.Handlers?[httpMethod];
+        return node?.Handlers?[httpMethod] as Action;
+    }
+
+    public Action<T>? MatchRoute<T>(string path, string httpMethod, out T parameters) where T : new()
+    {
+        var pathSegments = path.Trim('/').Split('/');
+        var paramDict = new Dictionary<string, string>();
+        var node = _root.Match(pathSegments, 0, paramDict);
+        parameters = new T();
+
+        foreach (var prop in typeof(T).GetProperties())
+        {
+            if (paramDict.TryGetValue(prop.Name, out var value))
+            {
+                prop.SetValue(parameters, Convert.ChangeType(value, prop.PropertyType));
+            }
+        }
+
+        return node?.Handlers?[httpMethod] as Action<T>;
     }
 }
